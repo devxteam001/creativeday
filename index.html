@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <!-- Mobile / cellphone targeted viewport -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Registration Check</title>
+
+  <!-- IDS Enterprise Web Components (Infor Design System) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ids-enterprise-wc@1.17.1/themes/ids-theme-default-light.css" />
+  <script type="module" src="https://cdn.jsdelivr.net/npm/ids-enterprise-wc@1.17.1/enterprise-wc.all.iife.js"></script>
+
+  <style>
+    :root {
+      color-scheme: light;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      background: #f5f5f5;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    /* Phone-first layout: single centered column, comfortable touch targets */
+    .app-shell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-height: 100vh;
+      padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+      box-sizing: border-box;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: #ffffff;
+      border-radius: 14px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+      padding: 24px 20px 28px;
+      box-sizing: border-box;
+      margin-top: 8vh;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    .header ids-text {
+      display: block;
+    }
+
+    .field {
+      margin-bottom: 18px;
+    }
+
+    /* Full-width, thumb-friendly controls */
+    ids-input,
+    ids-button {
+      width: 100%;
+    }
+
+    ids-button {
+      margin-top: 4px;
+    }
+
+    #result {
+      margin-top: 22px;
+      min-height: 24px;
+    }
+
+    .result-box {
+      border-radius: 10px;
+      padding: 16px;
+      text-align: center;
+    }
+
+    .result-box.success {
+      background: #e6f4ea;
+      border: 1px solid #b7dfc2;
+    }
+
+    .result-box.error {
+      background: #fbeaea;
+      border: 1px solid #f0c2c2;
+    }
+
+    .result-box.info {
+      background: #eef2f7;
+      border: 1px solid #d3dce6;
+    }
+
+    .config-warning {
+      margin-top: 16px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <div class="card">
+      <div class="header">
+        <ids-text type="h1" font-size="24" font-weight="bold">Session Check-In</ids-text>
+        <ids-text type="span" font-size="14" color="unset">Verify your registration</ids-text>
+      </div>
+
+      <form id="check-form" autocomplete="off" novalidate>
+        <div class="field">
+          <ids-input
+            id="email"
+            type="email"
+            label="Please enter your email address"
+            placeholder="you@example.com"
+            size="full"
+            autocomplete="email"
+            inputmode="email"></ids-input>
+        </div>
+
+        <ids-button id="submit-btn" type="submit" appearance="primary">
+          <span>Submit</span>
+        </ids-button>
+      </form>
+
+      <div id="result" aria-live="polite"></div>
+
+      <div id="config-warning" class="config-warning" hidden>
+        <ids-text type="span" font-size="12" color="error">
+          No session specified. Add <strong>?check=source1</strong> to the URL.
+        </ids-text>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      // Read the "check" query string parameter -> determines which out/<check>.txt to compare against.
+      const params = new URLSearchParams(window.location.search);
+      const checkName = (params.get('check') || '').trim();
+
+      const resultEl = document.getElementById('result');
+      const warningEl = document.getElementById('config-warning');
+
+      if (!checkName) {
+        warningEl.hidden = false;
+      }
+
+      // Compute lowercase SHA-256 hex of a string using the Web Crypto API.
+      async function sha256Hex(text) {
+        const bytes = new TextEncoder().encode(text);
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
+        return Array.from(new Uint8Array(digest))
+          .map((b) => b.toString(16).padStart(2, '0'))
+          .join('');
+      }
+
+      function showResult(message, kind) {
+        resultEl.innerHTML =
+          '<div class="result-box ' + kind + '">' +
+          '<ids-text type="span" font-size="16" font-weight="bold">' +
+          message +
+          '</ids-text></div>';
+      }
+
+      // Guard against path traversal in the check parameter; only allow safe file-name characters.
+      function sanitizeCheckName(name) {
+        return /^[A-Za-z0-9._-]+$/.test(name) ? name : null;
+      }
+
+      async function loadHashSet(name) {
+        const response = await fetch('out/' + encodeURIComponent(name) + '.txt', { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error('HTTP ' + response.status);
+        }
+        const text = await response.text();
+        const set = new Set();
+        text.split(/\r?\n/).forEach((line) => {
+          const trimmed = line.trim().toLowerCase();
+          if (trimmed) {
+            set.add(trimmed);
+          }
+        });
+        return set;
+      }
+
+      async function handleSubmit(event) {
+        if (event) {
+          event.preventDefault();
+        }
+
+        const emailInput = document.getElementById('email');
+        const rawEmail = (emailInput.value || '').trim();
+
+        if (!rawEmail) {
+          showResult('Please enter your email address.', 'info');
+          return;
+        }
+
+        if (!checkName) {
+          showResult('No session specified in the link.', 'error');
+          return;
+        }
+
+        const safeName = sanitizeCheckName(checkName);
+        if (!safeName) {
+          showResult('Invalid session identifier.', 'error');
+          return;
+        }
+
+        showResult('Checking...', 'info');
+
+        try {
+          // Convert to lowercase, then encode to SHA-256.
+          const emailLower = rawEmail.toLowerCase();
+          const hash = await sha256Hex(emailLower);
+
+          const hashSet = await loadHashSet(safeName);
+
+          if (hashSet.has(hash)) {
+            showResult("You're registered! Please come in!", 'success');
+          } else {
+            showResult('Sorry you are not registered in this session.', 'error');
+          }
+        } catch (err) {
+          showResult('Could not load session "' + checkName + '". ' + err.message, 'error');
+        }
+      }
+
+      const form = document.getElementById('check-form');
+      form.addEventListener('submit', handleSubmit);
+
+      // IDS button emits a click; the surrounding form submit covers it, but bind directly too
+      // in case the custom element does not forward the native submit in some browsers.
+      const submitBtn = document.getElementById('submit-btn');
+      submitBtn.addEventListener('click', function (e) {
+        // If the button is not acting as a native submit, trigger manually.
+        if (e && e.target && e.target.getAttribute('type') !== 'submit') {
+          handleSubmit(e);
+        }
+      });
+
+      // Allow pressing Enter in the email field to submit.
+      window.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          handleSubmit(e);
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
