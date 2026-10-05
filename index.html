@@ -102,6 +102,11 @@
       text-align: center;
     }
 
+    .result-box #confirm-btn {
+      display: inline-block;
+      margin-top: 14px;
+    }
+
     .result-box.success {
       background: rgba(230, 244, 234, 0.95);
       border: 1px solid #b7dfc2;
@@ -182,6 +187,15 @@
           .join('');
       }
 
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
       function showResult(message, kind) {
         resultEl.innerHTML =
           '<div class="result-box ' + kind + '">' +
@@ -209,6 +223,70 @@
           }
         });
         return set;
+      }
+
+      // Minimal CSV field splitter that respects double-quoted fields.
+      function splitCsvLine(line) {
+        const fields = [];
+        let current = '';
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+          const ch = line[i];
+          if (inQuotes) {
+            if (ch === '"') {
+              if (line[i + 1] === '"') { current += '"'; i++; }
+              else { inQuotes = false; }
+            } else {
+              current += ch;
+            }
+          } else if (ch === '"') {
+            inQuotes = true;
+          } else if (ch === ',') {
+            fields.push(current);
+            current = '';
+          } else {
+            current += ch;
+          }
+        }
+        fields.push(current);
+        return fields;
+      }
+
+      // Look up a session row from SessionList.csv by its code (Column A).
+      // Returns { name: <Column C>, url: <Column B> } or null if not found.
+      async function lookupSession(code) {
+        try {
+          const response = await fetch('SessionList.csv', { cache: 'no-store' });
+          if (!response.ok) {
+            return null;
+          }
+          const text = await response.text();
+          const target = code.trim().toLowerCase();
+          const lines = text.split(/\r?\n/);
+          for (const line of lines) {
+            if (!line.trim()) { continue; }
+            const cols = splitCsvLine(line);
+            const colA = (cols[0] || '').trim();
+            const colB = (cols[1] || '').trim();
+            const colC = (cols[2] || '').trim();
+            if (colA.toLowerCase() === target) {
+              return { name: colC || null, url: colB || null };
+            }
+          }
+          return null;
+        } catch (err) {
+          return null;
+        }
+      }
+
+      // Only allow http(s) links from the CSV to be opened.
+      function safeHttpUrl(url) {
+        try {
+          const parsed = new URL(url);
+          return (parsed.protocol === 'https:' || parsed.protocol === 'http:') ? parsed.href : null;
+        } catch (err) {
+          return null;
+        }
       }
 
       async function handleSubmit(event) {
@@ -245,7 +323,33 @@
           const hashSet = await loadHashSet(safeName);
 
           if (hashSet.has(hash)) {
-            showResult("You're registered! Please come in!", 'success');
+            // Resolve the session (Columns B and C) from SessionList.csv using
+            // the check code (Column A). Fall back to the code if not found.
+            const session = await lookupSession(safeName);
+            const sessionName = (session && session.name) || safeName;
+            const confirmUrl = session && session.url ? safeHttpUrl(session.url) : null;
+
+            // Hide the input form on a successful match.
+            form.hidden = true;
+
+            showResult(
+              "You're registered in " + escapeHtml(sessionName) +
+              "! Please confirm your attendance and come in!",
+              'success'
+            );
+
+            // Add a "Confirm attendance" button that opens the Column B link.
+            if (confirmUrl) {
+              const resultBox = resultEl.querySelector('.result-box');
+              const btn = document.createElement('ids-button');
+              btn.setAttribute('id', 'confirm-btn');
+              btn.setAttribute('appearance', 'primary');
+              btn.textContent = 'Confirm attendance';
+              btn.addEventListener('click', function () {
+                window.open(confirmUrl, '_blank', 'noopener,noreferrer');
+              });
+              resultBox.appendChild(btn);
+            }
           } else {
             showResult('Sorry you are not registered in this session.', 'error');
           }
