@@ -178,6 +178,41 @@
         warningEl.hidden = false;
       }
 
+      // Key used to remember the last submitted email across visits.
+      const EMAIL_STORAGE_KEY = 'registrationCheck.email';
+
+      // Safe wrappers in case storage is unavailable (private mode, etc.).
+      function loadSavedEmail() {
+        try {
+          return window.localStorage.getItem(EMAIL_STORAGE_KEY) || '';
+        } catch (err) {
+          return '';
+        }
+      }
+
+      function saveEmail(value) {
+        try {
+          window.localStorage.setItem(EMAIL_STORAGE_KEY, value);
+        } catch (err) {
+          /* ignore storage failures */
+        }
+      }
+
+      // Pre-fill the email field with the previously submitted value, if any.
+      // The IDS input may upgrade asynchronously, so set it once ready.
+      (function restoreSavedEmail() {
+        const saved = loadSavedEmail();
+        if (!saved) { return; }
+        const emailInput = document.getElementById('email');
+        if (!emailInput) { return; }
+        const apply = function () { emailInput.value = saved; };
+        if (window.customElements && customElements.whenDefined) {
+          customElements.whenDefined('ids-input').then(apply).catch(apply);
+        } else {
+          apply();
+        }
+      })();
+
       // Compute lowercase SHA-256 hex of a string using the Web Crypto API.
       async function sha256Hex(text) {
         const bytes = new TextEncoder().encode(text);
@@ -301,6 +336,9 @@
           showResult('Please enter your email address.', 'info');
           return;
         }
+
+        // Remember the submitted email so it can pre-fill on later visits.
+        saveEmail(rawEmail);
 
         if (!checkName) {
           showResult('No session specified in the link.', 'error');
